@@ -147,18 +147,17 @@ pip install -r requirements.txt
 python main.py
 ```
 
-This executes all 10 steps automatically:
+This executes all 9 steps automatically:
 
-1. Downloads C-MAPSS data (if not already present)
-2. Loads datasets and selects informative sensors
-3. Runs EDA (missing values, duplicates, degradation plots)
-4. Preprocesses data (RUL labels, condition normalisation)
-5. Creates PyTorch DataLoaders with sliding windows
-6. Trains models for all 4 FD datasets
-7. Checks MoE expert utilisation balance
-8. Runs MC Dropout evaluation (T=50 samples)
-9. Plots results with uncertainty bands
-10. Saves model weights and RUL predictions
+1. Loads datasets and selects informative sensors
+2. Runs EDA (missing values, duplicates, degradation plots)
+3. Preprocesses data (RUL labels, condition normalisation)
+4. Creates PyTorch DataLoaders with sliding windows
+5. Trains models for all 4 FD datasets
+6. Checks MoE expert utilisation balance
+7. Runs MC Dropout evaluation (T=50 samples)
+8. Plots results with uncertainty bands
+9. Prints final summary, saves model weights and RUL predictions
 
 ### 🖥️ Training on CPU
 
@@ -242,7 +241,7 @@ This pipeline successfully guarantees even distribution across all 4 experts usi
 ### Evaluation Metrics
 
 - **RMSE** — Root Mean Squared Error (in engine cycles)
-- **NASA Score** — Asymmetric scoring function that penalises late predictions (under-predictions) more than early ones:
+- **NASA Score** — Asymmetric scoring function that penalises late predictions (under-predictions) more than early ones. Here, **`d = Predicted RUL - True RUL`** (the error difference in cycles):
 
 ```
 Score = Σ (exp(d/10) - 1)   if d ≥ 0  (late prediction)
