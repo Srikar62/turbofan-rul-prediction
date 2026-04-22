@@ -183,19 +183,19 @@ The pipeline runs on CPU automatically if no GPU is detected. However, training 
 
 ```
 Input: [Batch, Window, Sensors]
-        │
-        ▼
+                 │
+                 ▼
 ┌─────────────────────────────────┐
 │  Multi-scale CNN                │  ← Conv1D (k=3, 5, 7) in parallel
 │  + GELU + Dropout + LayerNorm   │
 └────────────────┬────────────────┘
                  │
-        ▼
+                 ▼
 ┌─────────────────────────────────┐
 │  BiLSTM (2-layer, hidden=128)   │  ← Bidirectional, captures time dependencies
 └────────────────┬────────────────┘
                  │
-        ▼
+                 ▼
 ┌─────────────────────────────────┐
 │  3D Attention                   │  ← Highlights degradation-informative steps
 │  + AttentionPool                │
@@ -206,14 +206,16 @@ Input: [Batch, Window, Sensors]
   Learned FC          HC Feature FC     ← Dual-stream: sequential + handcrafted
         └────────┬────────┘
                  │ Concatenate
-        ▼
+                 ▼
 ┌─────────────────────────────────┐
 │  MoE Output Head                │  ← 4 Expert MLPs + gated router
 │  (entropy reg. + var. penalty)  │
 └────────────────┬────────────────┘
                  │
-        ▼
-  RUL ∈ [0, 1]  (× RUL_MAX = cycles)
+                 ▼
+┌─────────────────────────────────┐
+│  Predicted RUL (Engine Cycles)  │
+└─────────────────────────────────┘
 ```
 
 ### Solving the Expert Utilisation Problem (MoE Collapse)
