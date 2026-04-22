@@ -1,0 +1,21 @@
+# Python Environments (MUST IGNORE)
+.venv/
+env/
+venv/
+
+# Python compiled bytecode (MUST IGNORE)
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE and OS specific files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# If you specifically want to ignore the heavy raw NASA datasets, uncomment the next line:
+# data/
+
+# If you specifically want to ignore trained weights, uncomment the next line:
+# *.pt
