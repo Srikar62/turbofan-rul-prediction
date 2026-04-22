@@ -51,10 +51,9 @@ Traditional threshold-based maintenance strategies lead to either **premature re
 ```
 turbofan-rul-prediction/
 │
-├── main.py                   # Entry point — orchestrates all 10 pipeline steps
+├── main.py                   # Entry point — orchestrates all pipeline steps
 ├── config.py                 # Hyperparameters, constants, device setup
 │
-├── data_download.py          # Auto-downloads C-MAPSS dataset
 ├── data_loading.py           # Loads FD001–FD004, selects informative sensors
 ├── data_processing.py        # RUL computation, condition-based normalisation
 ├── dataset.py                # PyTorch Dataset (sliding window + HC features)
@@ -76,7 +75,6 @@ turbofan-rul-prediction/
 │
 ├── requirements.txt          # Python dependencies
 ├── test_gpu.py               # GPU availability diagnostics
-├── turbofan_rul_v6_(1).ipynb # Original research/development notebook
 │
 ├── data/                     # C-MAPSS raw data files (auto-downloaded)
 ├── predictions/              # Output: remaininguselife_fd00X.txt files
@@ -147,7 +145,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-This executes all 9 steps automatically:
+This executes the pipeline steps automatically:
 
 1. Loads datasets and selects informative sensors
 2. Runs EDA (missing values, duplicates, degradation plots)
