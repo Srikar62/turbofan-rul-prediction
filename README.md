@@ -1,6 +1,8 @@
-# 🔧 Turbofan Engine RUL Prediction
+# 🔧 Turbofan Engine RUL Prediction & AeroAgent-Twin
 
 A deep learning pipeline for **Remaining Useful Life (RUL) prediction** of turbofan engines using the NASA C-MAPSS benchmark dataset. The system uses a hybrid **CNN-BiLSTM with 3D Attention + Mixture of Experts (MoE)** architecture with **Monte Carlo (MC) Dropout** for uncertainty quantification.
+
+The **AeroAgent-Twin** extension converts numerical RUL predictions into actionable maintenance diagnostics using a simplified physics digital twin, a local RAG system over turbofan MRO SOPs, and optional Groq/OpenAI-compatible LLM report synthesis.
 
 ---
 
@@ -12,7 +14,7 @@ Predicting when an aircraft engine will fail is a critical problem in **predicti
 
 Traditional threshold-based maintenance strategies lead to either **premature replacements** (costly) or **unexpected failures** (dangerous). This system provides:
 - Accurate cycle-level RUL estimates
-- Calibrated **uncertainty bounds** (5th–95th percentile confidence intervals)
+- Calibrated **uncertainty bounds** (2.5th–97.5th percentile confidence intervals)
 - Per-dataset tuned models covering single and multi-condition operating regimes
 
 ---
@@ -31,6 +33,15 @@ Traditional threshold-based maintenance strategies lead to either **premature re
 - **Full EDA Suite** — missing value analysis, duplicate checks, sensor degradation plots
 - **Prediction Export** — RUL predictions saved to `.txt` files per dataset
 
+### AeroAgent-Twin Extension Features
+
+- **Probabilistic Inference API** — async MC Dropout service with sensor anomaly extraction and health classification
+- **Physics Digital Twin** — simplified thermodynamic consistency checker mapping sensor deviations to HPC/HPT/combustor degradation
+- **Hybrid RAG Retrieval** — TF-IDF + BM25 keyword search (optional sentence-transformer dense embeddings) over MRO SOP corpus
+- **Agentic Diagnostic Graph** — deterministic pipeline with optional LangGraph stateful workflow
+- **LLM Report Synthesis** — optional Groq/OpenAI grounded diagnostic reports with hallucination guard
+- **MRO Work Order Generation** — structured maintenance tickets with urgency classification, action items, parts, and SOP references
+
 ---
 
 ## 🛠️ Tech Stack
@@ -41,6 +52,9 @@ Traditional threshold-based maintenance strategies lead to either **premature re
 | **Deep Learning** | PyTorch 2.7 (CUDA 11.8) |
 | **Data Processing** | NumPy, Pandas, scikit-learn |
 | **Visualisation** | Matplotlib, Seaborn |
+| **API / Schemas** | FastAPI, Pydantic |
+| **RAG** | TF-IDF / sentence-transformers (optional) |
+| **LLM Integration** | Groq / OpenAI (optional) |
 | **Dataset** | NASA C-MAPSS (FD001–FD004) |
 | **Hardware** | CUDA GPU (CPU fallback supported) |
 
@@ -52,6 +66,7 @@ Traditional threshold-based maintenance strategies lead to either **premature re
 turbofan-rul-prediction/
 │
 ├── main.py                   # Entry point — orchestrates all pipeline steps
+├── app_aeroagent.py          # AeroAgent-Twin CLI + FastAPI entrypoint
 ├── config.py                 # Hyperparameters, constants, device setup
 │
 ├── data_loading.py           # Loads FD001–FD004, selects informative sensors
@@ -73,10 +88,33 @@ turbofan-rul-prediction/
 ├── duplicatecheck.py         # Duplicate row detection
 ├── EDA.py                    # Full exploratory data analysis with plots
 │
+├── api/                      # Probabilistic inference service
+│   ├── inference.py          # MC Dropout RUL inference + anomaly extraction
+│   └── schemas.py            # Pydantic schemas (TelemetryInput, RULResponse)
+│
+├── agents/                   # Agentic diagnostic graph
+│   ├── graph.py              # Deterministic + LangGraph workflow orchestration
+│   ├── llm_report.py         # Optional Groq/OpenAI report synthesis
+│   ├── state.py              # AgentState TypedDict
+│   └── tools.py              # Tool wrappers (inference, physics, RAG, MRO)
+│
+├── physics/                  # Thermodynamic digital twin
+│   ├── digital_twin.py       # Sensor → HPC/HPT/combustor degradation mapping
+│   └── thermo_models.py      # Gas turbine thermodynamic equations
+│
+├── rag/                      # RAG retrieval system
+│   ├── ingest.py             # SOP document loading and chunking
+│   └── vector_store.py       # Hybrid vector + keyword retrieval
+│
+├── mro/                      # MRO work order service
+│   └── work_order.py         # Structured work order generation
+│
+├── data/                     # C-MAPSS raw data files
+│   └── mro_manuals/          # Synthetic MRO SOP corpus
+│       └── turbofan_mro_sop.json
+│
 ├── requirements.txt          # Python dependencies
 ├── test_gpu.py               # GPU availability diagnostics
-│
-├── data/                     # C-MAPSS raw data files (auto-downloaded)
 ├── predictions/              # Output: remaininguselife_fd00X.txt files
 └── turbofan_models/          # Saved model weights (created after training)
 ```
@@ -135,6 +173,34 @@ Or install everything at once using the requirements file (GPU build):
 pip install -r requirements.txt
 ```
 
+### 5. Install AeroAgent-Twin Extras (Optional)
+
+For LLM report synthesis via Groq:
+```bash
+pip install openai python-dotenv
+```
+
+For FastAPI serving:
+```bash
+pip install fastapi uvicorn pydantic
+```
+
+For dense embeddings in RAG (optional, default uses TF-IDF):
+```bash
+pip install sentence-transformers
+```
+
+### 6. LLM API Setup (Optional — for Groq Report Synthesis)
+
+Create a `.env` file in the project root:
+```env
+GROQ_API_KEY=your_groq_api_key_here
+AEROAGENT_LLM_PROVIDER=groq
+AEROAGENT_LLM_MODEL=llama-3.3-70b-versatile
+```
+
+> **Note:** Never paste API keys into Python files. `.env` is already in `.gitignore`.
+
 ---
 
 ## 🚀 Usage
@@ -157,6 +223,36 @@ This executes the pipeline steps automatically:
 8. Plots results with uncertainty bands
 9. Prints final summary, saves model weights and RUL predictions
 
+### Run AeroAgent-Twin Diagnostics
+
+```bash
+python app_aeroagent.py --engine_id 15 --fd_id 2
+```
+
+This runs the full agentic diagnostic pipeline:
+1. Loads raw telemetry for the specified engine
+2. Runs MC Dropout RUL inference with anomaly extraction
+3. Validates degradation via the physics digital twin
+4. Retrieves relevant MRO SOPs via hybrid RAG
+5. Generates a structured MRO work order
+6. Outputs a JSON diagnostic report
+
+Save the report to a file:
+```bash
+python app_aeroagent.py --engine_id 15 --fd_id 2 --output diagnostic_report.json
+```
+
+### Run as FastAPI Server
+
+```bash
+uvicorn app_aeroagent:app --reload
+```
+
+Endpoints:
+- `GET /health` — service health check
+- `POST /predict` — MC Dropout RUL inference only
+- `POST /diagnose` — full diagnostic pipeline
+
 ### 🖥️ Training on CPU
 
 The pipeline runs on CPU automatically if no GPU is detected. However, training is significantly slower.
@@ -171,6 +267,7 @@ The pipeline runs on CPU automatically if no GPU is detected. However, training 
 | `eda_fd00X.png` | EDA distribution plots |
 | `eda_degradation_fd00X.png` | Sensor degradation curves |
 | `rul_results.png` | RUL prediction vs ground truth with CI |
+| `diagnostic_report.json` | AeroAgent-Twin diagnostic output (optional) |
 
 ---
 
@@ -215,6 +312,52 @@ Input: [Batch, Window, Sensors]
 └─────────────────────────────────┘
 ```
 
+### AeroAgent-Twin — End-to-End Diagnostic Architecture
+
+```
+Telemetry Input (engine_id + fd_id)
+                 │
+                 ▼
+┌─────────────────────────────────┐
+│  TelemetryInferenceService      │  ← api/inference.py
+│  MC Dropout (T=50) + Anomaly    │     Loads model_FD00X.pt
+│  Detection + Health Status      │     z-score sensor deviation
+└────────────────┬────────────────┘
+                 │
+        ┌────────┴────────┐
+        ▼                 ▼
+  RUL μ, σ, CI       Anomaly Vector
+        │                 │
+        │                 ▼
+        │   ┌─────────────────────────────────┐
+        │   │  ThermodynamicDigitalTwin        │  ← physics/digital_twin.py
+        │   │  HPC / HPT / Combustor loss      │     thermo_models.py equations
+        │   │  Thermal margin + dominant cause  │
+        │   └────────────────┬────────────────┘
+        │                    │
+        │                    ▼
+        │   ┌─────────────────────────────────┐
+        │   │  HybridVectorStore (RAG)         │  ← rag/vector_store.py
+        │   │  0.65×dense + 0.35×keyword       │     turbofan_mro_sop.json
+        │   │  + component/fault_code boost     │
+        │   └────────────────┬────────────────┘
+        │                    │
+        └────────┬───────────┘
+                 │
+                 ▼
+┌─────────────────────────────────┐
+│  MRO Work Order Builder         │  ← mro/work_order.py
+│  Urgency, actions, parts, refs  │
+└────────────────┬────────────────┘
+                 │
+                 ▼
+┌─────────────────────────────────┐
+│  Final Diagnostic Report        │  ← agents/graph.py
+│  (Optional LLM synthesis via    │     agents/llm_report.py
+│   Groq / OpenAI)                │
+└─────────────────────────────────┘
+```
+
 ### Solving the Expert Utilisation Problem (MoE Collapse)
 
 A common flaw in standard Mixture of Experts (MoE) architectures is **Expert Collapse**, where the gating network becomes mathematically "lazy" and routes all data to only 1 or 2 experts, leaving the others completely unutilised (dead). 
@@ -255,3 +398,33 @@ Score = Σ (exp(d/10) - 1)   if d ≥ 0  (late prediction)
 | **FD003** | 12.00 | 259.70 | ± 4 cycles |
 | **FD004** | 18.44 | 2209.97 | ± 6 cycles |
 | **Average** | **14.08** | **864.55** | - |
+
+---
+
+## 📄 RAG Corpus
+
+The RAG system indexes a synthetic MRO SOP corpus at `data/mro_manuals/turbofan_mro_sop.json` containing 5 procedures:
+
+| SOP ID | Component | Fault Code | Urgency |
+|---|---|---|---|
+| SOP-HPC-001 | HPC | HPC-EROSION | urgent |
+| SOP-HPT-002 | HPT | HPT-THERMAL-WEAR | aircraft_on_ground |
+| SOP-COMB-003 | Combustor | COMBUSTOR-THERMAL-STRESS | urgent |
+| SOP-SENS-004 | Sensors | SENSOR-CALIBRATION | expedite |
+| SOP-BRG-005 | Bearings | BEARING-WEAR | aircraft_on_ground |
+
+> **Note:** This corpus is synthetic and generic — it is not sourced from proprietary OEM maintenance manuals. Intended for research/demo use.
+
+---
+
+## 🔍 Verification
+
+Compile-check the new modules:
+```bash
+python -m compileall api physics rag agents mro app_aeroagent.py
+```
+
+Run an end-to-end smoke test:
+```bash
+python app_aeroagent.py --engine_id 15 --fd_id 2
+```
