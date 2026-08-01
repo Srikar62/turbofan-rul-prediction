@@ -393,7 +393,6 @@ Score = Σ (exp(d/10) - 1)   if d ≥ 0  (late prediction)
 
 | Dataset | RMSE | Score | Uncertainty (Avg) |
 |:---:|:---:|:---:|:---:|
-<<<<<<< HEAD
 | **FD001** | 13.99 | 329.34 | ± 3 cycles |
 | **FD002** | 11.90 | 659.17 | ± 3 cycles |
 | **FD003** | 12.00 | 259.70 | ± 4 cycles |
@@ -429,10 +428,3 @@ Run an end-to-end smoke test:
 ```bash
 python app_aeroagent.py --engine_id 15 --fd_id 2
 ```
-=======
-| **FD001** | 13.99 | 326.89 | ± 3 cycles |
-| **FD002** | 11.99 | 663.79 | ± 3 cycles |
-| **FD003** | 12.20 | 274.54 | ± 4 cycles |
-| **FD004** | 18.46 | 2227.36 | ± 6 cycles |
-| **Average** | **14.16** | **873.17** | - |
->>>>>>> d4e56f54bc32e60cc611b8c64da79cee3f8c42de
