@@ -186,6 +186,40 @@ The pipeline runs on CPU automatically if no GPU is detected. However, training 
 | `eda_fd00X.png` | EDA distribution plots |
 | `eda_degradation_fd00X.png` | Sensor degradation curves |
 | `rul_results.png` | RUL prediction vs ground truth with CI |
+---
+
+## 📊 Interactive Dashboard
+
+The project includes a **Dash/Plotly** interactive dashboard for exploring model results, metrics, and EDA visualisations — all in your browser.
+
+### Launch the Dashboard
+
+```bash
+python -m dashboard.app
+```
+
+Then open **http://127.0.0.1:8050** in your browser.
+
+> **Note:** The dashboard automatically runs live inference on first launch if no cached results exist. This requires trained model weights (`model_FD001.pt` – `model_FD004.pt`) in the project root.
+
+### Dashboard Tabs
+
+| Tab | Description |
+|---|---|
+| **Overview** | KPI cards (Avg RMSE, Score, MAE, Uncertainty), performance summary table, metrics comparison bar charts, multi-metric radar chart, and dataset property cards |
+| **FD001 – FD004** | Per-dataset deep dive — KPIs, RUL prediction vs ground truth with 90% confidence interval bands, predicted vs true scatter plot, uncertainty analysis (colour-coded by σ), and error distribution / residual plots |
+| **Experts** | MoE gate utilisation analysis — expert weight heatmap across datasets, grouped bar chart of per-expert weights, and entropy balance gauge (% of perfect uniformity) |
+| **EDA** | Pre-generated exploratory data analysis images — sensor distributions and degradation trajectory plots per dataset (selectable via dropdown) |
+
+### Dashboard Tech Stack
+
+| Component | Technology |
+|---|---|
+| **Framework** | Dash 2.x |
+| **Charts** | Plotly.js (via `plotly.graph_objects`) |
+| **Tables** | Dash DataTable |
+| **Styling** | Custom inline styles (dark glassmorphism theme) |
+| **Server** | Flask (built into Dash) |
 
 ---
 
