@@ -75,10 +75,25 @@ turbofan-rul-prediction/
 │
 ├── requirements.txt          # Python dependencies
 ├── test_gpu.py               # GPU availability diagnostics
+├── .gitignore                # Git ignore rules
 │
-├── data/                     # C-MAPSS raw data files (auto-downloaded)
-├── predictions/              # Output: remaininguselife_fd00X.txt files
-└── turbofan_models/          # Saved model weights (created after training)
+├── dashboard/                # Interactive Dash/Plotly results dashboard
+│   ├── __init__.py           # Package marker
+│   ├── app.py                # Main Dash application entry point
+│   ├── components.py         # Plotly chart & UI component builders
+│   ├── data_loader.py        # Loads cached results for the dashboard
+│   ├── theme.py              # Dashboard colour palette & style constants
+│   └── assets/               # Static assets served by Dash
+│       ├── eda_fd001–fd004.png           # EDA distribution plots
+│       ├── eda_degradation_fd001–fd004.png  # Sensor degradation curves
+│       └── rul_results.png               # RUL prediction results plot
+│
+└── data/                     # C-MAPSS raw data files
+    ├── train_FD001–FD004.txt             # Training data per dataset
+    ├── test_FD001–FD004.txt              # Test data per dataset
+    ├── RUL_FD001–FD004.txt               # Ground truth RUL values
+    ├── readme.txt                        # Dataset documentation
+    └── Damage Propagation Modeling.pdf   # NASA reference paper
 ```
 
 ---
