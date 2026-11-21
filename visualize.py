@@ -78,6 +78,7 @@ def plot_results(mc_results, all_histories):
         ax  = axes[0, idx]
         ax2 = ax.twinx()
         ax.plot(ep, hist['rmse'], color=C['r'], lw=1.5, label='Test RMSE')
+        ax.plot(ep, hist['mae'], color='#2CA02C', lw=1.2, ls='--', alpha=0.8, label='Test MAE')
         ax2.plot(ep, hist['train_loss'], color=C['l'], lw=1, alpha=0.6, label='Train loss')
         ax.set_title(f'FD00{fd_id} Training', fontsize=11)
         ax.set_xlabel('Epoch')
@@ -95,8 +96,8 @@ def plot_results(mc_results, all_histories):
                          alpha=0.18, color=C['ci'], label='90% CI')
         ax.plot(x, res['true'][:n], color=C['t'], lw=1.2, label='True', zorder=3)
         ax.plot(x, res['mean'][:n], color=C['p'], lw=1.2, label='Pred', zorder=3)
-        ax.set_title(f'FD00{fd_id} | RMSE={res["rmse"]:.2f} | Score={res["score"]:.0f}',
-                     fontsize=10)
+        ax.set_title(f'FD00{fd_id} | RMSE={res["rmse"]:.2f} | MAE={res["mae"]:.2f} | R\u00b2={res["r2"]:.3f} | Score={res["score"]:.0f}',
+                     fontsize=9)
         ax.set_xlabel('Sample')
         ax.set_ylabel('RUL (cycles)')
         ax.legend(fontsize=8)

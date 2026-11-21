@@ -97,19 +97,21 @@ def train_model(fd_id, loaders, selected_sensors, hc_n_feat, device=DEVICE):
     scheduler       = make_scheduler(optimizer, cfg, steps_per_epoch)
 
     best_rmse, best_state = float('inf'), None
-    history    = {'train_loss': [], 'rmse': [], 'score': []}
+    history    = {'train_loss': [], 'rmse': [], 'score': [], 'mae': [], 'r2': []}
     no_improve = 0
     log_every  = max(1, epochs // 10)
 
     for epoch in range(1, epochs + 1):
         tr_loss = train_one_epoch(
             model, loaders[fd_id]['train'], optimizer, scheduler, device)
-        rmse, score = evaluate(
+        rmse, score, mae, r2 = evaluate(
             model, loaders[fd_id]['test'], device, RUL_MAX[fd_id])
 
         history['train_loss'].append(tr_loss)
         history['rmse'].append(rmse)
         history['score'].append(score)
+        history['mae'].append(mae)
+        history['r2'].append(r2)
 
         if rmse < best_rmse:
             best_rmse  = rmse
@@ -121,7 +123,7 @@ def train_model(fd_id, loaders, selected_sensors, hc_n_feat, device=DEVICE):
         if epoch % log_every == 0:
             cur_lr = optimizer.param_groups[0]['lr']
             print(f'  Epoch {epoch:4d}/{epochs} | Loss:{tr_loss:.5f} | '
-                  f'RMSE:{rmse:.4f} | Score:{score:.1f} | LR:{cur_lr:.2e}')
+                  f'RMSE:{rmse:.4f} | MAE:{mae:.4f} | R\u00b2:{r2:.4f} | Score:{score:.1f} | LR:{cur_lr:.2e}')
 
         if epoch > 15 and no_improve >= patience:
             print(f'  Early stop ep {epoch} (no improvement for {patience} epochs)')
