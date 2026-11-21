@@ -6,7 +6,7 @@ import torch
 import torch.nn.functional as F
 
 from config import MC_T, RUL_MAX, DEVICE
-from metrics import score_function
+from metrics import score_function, r2_score
 
 
 def mc_predict(model, x_seq, x_hc, T=50, rul_max=130, device=DEVICE):
@@ -67,14 +67,17 @@ def mc_dropout_evaluate(trained_models, loaders, device=DEVICE, mc_t=MC_T):
         astd = np.array(astd)
         mae   = np.abs(am - at).mean()
         rmse  = np.sqrt(((am - at) ** 2).mean())
+        ss_res = ((at - am) ** 2).sum()
+        ss_tot = ((at - at.mean()) ** 2).sum()
+        r2 = 1 - ss_res / ss_tot
         score = score_function(torch.tensor(am), torch.tensor(at))
 
         mc_results[fd_id] = {
             'mean': am, 'true': at, 'std': astd,
             'ci_lo': np.array(alo), 'ci_hi': np.array(ahi),
-            'mae': mae, 'rmse': rmse, 'score': score
+            'mae': mae, 'rmse': rmse, 'score': score, 'r2': r2
         }
-        print(f'  FD00{fd_id}: MAE={mae:.4f} | RMSE={rmse:.4f} | Score={score:.1f} | '
+        print(f'  FD00{fd_id}: MAE={mae:.4f} | RMSE={rmse:.4f} | R\u00b2={r2:.4f} | Score={score:.1f} | '
               f'Uncertainty={int(round(astd.mean()))} cycles')
 
     return mc_results

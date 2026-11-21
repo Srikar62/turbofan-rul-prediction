@@ -3,6 +3,8 @@ Configuration and constants for Turbofan RUL prediction.
 CNN+BiLSTM+3DAttn + True MoE(4) + MC Dropout
 """
 import os
+os.environ["LOKY_MAX_CPU_COUNT"] = "4"
+os.environ["PYTHONUNBUFFERED"] = "1"
 import random
 import numpy as np
 import torch
@@ -31,7 +33,7 @@ TRAIN_CFG = {
     1: {'epochs': 300, 'lr': 5e-4, 'wd': 5e-3, 'dropout': 0.35, 'patience': 25},
     2: {'epochs': 400, 'lr': 2e-4, 'wd': 5e-3, 'dropout': 0.35, 'patience': 30},
     3: {'epochs': 300, 'lr': 5e-4, 'wd': 5e-3, 'dropout': 0.4,  'patience': 25},
-    4: {'epochs': 450, 'lr': 1e-4, 'wd': 5e-3, 'dropout': 0.35, 'patience': 35},
+    4: {'epochs': 450, 'lr': 2e-4, 'wd': 5e-3, 'dropout': 0.35, 'patience': 35},
 }
 
 # ─── Data path (configurable via env var) ────────────────────────────────────

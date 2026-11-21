@@ -1,3 +1,5 @@
+import os
+os.environ["LOKY_MAX_CPU_COUNT"] = "4"
 """
 Load C-MAPSS raw data and select informative sensors.
 """

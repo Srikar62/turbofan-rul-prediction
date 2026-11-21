@@ -18,6 +18,29 @@ def score_function(pred_rul, true_rul):
     ).sum().item()
 
 
+def mae_metric(pred_rul, true_rul):
+    """
+    Compute Mean Absolute Error (MAE).
+
+    MAE = (1/N) * Σ|observed - predicted|
+    """
+    return torch.abs(pred_rul - true_rul).mean().item()
+
+
+def r2_score(pred_rul, true_rul):
+    """
+    Compute the R² (coefficient of determination) score.
+
+    R² = 1 - Σ(yᵢ - ŷᵢ)² / Σ(yᵢ - ȳ)²
+
+    A value of 1.0 indicates perfect prediction; 0.0 means the model
+    is no better than predicting the mean; negative values mean worse.
+    """
+    ss_res = ((true_rul - pred_rul) ** 2).sum()
+    ss_tot = ((true_rul - true_rul.mean()) ** 2).sum()
+    return (1 - ss_res / ss_tot).item()
+
+
 @torch.no_grad()
 def evaluate(model, loader, device, rul_max):
     """
@@ -26,6 +49,8 @@ def evaluate(model, loader, device, rul_max):
     Returns:
         rmse: Root Mean Squared Error (in cycles)
         score: C-MAPSS scoring function result
+        mae: Mean Absolute Error (in cycles)
+        r2: R² coefficient of determination
     """
     model.eval()
     preds, trues = [], []
@@ -38,4 +63,6 @@ def evaluate(model, loader, device, rul_max):
     trues = torch.cat(trues) * rul_max
     rmse = torch.sqrt(F.mse_loss(preds, trues)).item()
     score = score_function(preds, trues)
-    return rmse, score
+    mae = mae_metric(preds, trues)
+    r2 = r2_score(preds, trues)
+    return rmse, score, mae, r2
