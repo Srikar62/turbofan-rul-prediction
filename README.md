@@ -77,16 +77,15 @@ turbofan-rul-prediction/
 ├── test_gpu.py               # GPU availability diagnostics
 ├── .gitignore                # Git ignore rules
 │
-├── dashboard/                # Interactive Dash/Plotly results dashboard
-│   ├── __init__.py           # Package marker
-│   ├── app.py                # Main Dash application entry point
-│   ├── components.py         # Plotly chart & UI component builders
-│   ├── data_loader.py        # Loads cached results for the dashboard
-│   ├── theme.py              # Dashboard colour palette & style constants
-│   └── assets/               # Static assets served by Dash
-│       ├── eda_fd001–fd004.png           # EDA distribution plots
-│       ├── eda_degradation_fd001–fd004.png  # Sensor degradation curves
-│       └── rul_results.png               # RUL prediction results plot
+├── backend/                  # FastAPI real-time monitoring & inference API
+│   ├── server.py             # FastAPI app and static file server
+│   ├── inference_engine.py   # Telemetry ingestion & live RUL inference
+│   ├── shap_explainer.py     # SHAP feature attribution explainer
+│   └── scaler_manager.py     # Scaler management for multi-condition regimes
+├── frontend/                 # Web monitoring dashboard UI
+│   ├── index.html            # Main industrial monitoring interface
+│   ├── css/style.css         # Styling and dashboard layout
+│   └── js/dashboard.js       # Live telemetry and Chart.js visualizations
 │
 └── data/                     # C-MAPSS raw data files
     ├── train_FD001–FD004.txt             # Training data per dataset
@@ -188,38 +187,24 @@ The pipeline runs on CPU automatically if no GPU is detected. However, training 
 | `rul_results.png` | RUL prediction vs ground truth with CI |
 ---
 
-## 📊 Interactive Dashboard
+## 📊 Real-Time Monitoring Dashboard
 
-The project includes a **Dash/Plotly** interactive dashboard for exploring model results, metrics, and EDA visualisations — all in your browser.
+The project includes a real-time web monitoring dashboard powered by FastAPI and Chart.js for live telemetry streaming, fleet health assessment, and on-demand RUL inference.
 
 ### Launch the Dashboard
 
 ```bash
-python -m dashboard.app
+python -m backend.server
 ```
 
-Then open **http://127.0.0.1:8050** in your browser.
+Then open **http://127.0.0.1:8000** in your browser.
 
-> **Note:** The dashboard automatically runs live inference on first launch if no cached results exist. This requires trained model weights (`model_FD001.pt` – `model_FD004.pt`) in the project root.
+### Features
 
-### Dashboard Tabs
-
-| Tab | Description |
-|---|---|
-| **Overview** | KPI cards (Avg RMSE, Score, MAE, Uncertainty), performance summary table, metrics comparison bar charts, multi-metric radar chart, and dataset property cards |
-| **FD001 – FD004** | Per-dataset deep dive — KPIs, RUL prediction vs ground truth with 90% confidence interval bands, predicted vs true scatter plot, uncertainty analysis (colour-coded by σ), and error distribution / residual plots |
-| **Experts** | MoE gate utilisation analysis — expert weight heatmap across datasets, grouped bar chart of per-expert weights, and entropy balance gauge (% of perfect uniformity) |
-| **EDA** | Pre-generated exploratory data analysis images — sensor distributions and degradation trajectory plots per dataset (selectable via dropdown) |
-
-### Dashboard Tech Stack
-
-| Component | Technology |
-|---|---|
-| **Framework** | Dash 2.x |
-| **Charts** | Plotly.js (via `plotly.graph_objects`) |
-| **Tables** | Dash DataTable |
-| **Styling** | Custom inline styles (dark glassmorphism theme) |
-| **Server** | Flask (built into Dash) |
+- **Fleet Overview** — Real-time fleet health distribution, urgent maintenance priorities, and risk matrix.
+- **Live Engine Monitor** — Live sensor telemetry streams, degradation trajectories, and dynamic RUL predictions with confidence intervals.
+- **Upload Engine Data** — Upload custom engine telemetry files (CSV/text) for instant batch inference.
+- **Model Benchmarks** — View live benchmark performance against C-MAPSS test datasets.
 
 ---
 

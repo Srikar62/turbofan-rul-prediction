@@ -6,10 +6,6 @@ torch==2.7.1+cu118
 matplotlib==3.7.2
 seaborn==0.12.2
 
-# Interactive Dash Evaluation Dashboard
-dash>=2.14.0
-plotly>=5.18.0
-
 # Real-time Web Monitoring & Inference API
 fastapi>=0.100.0
 uvicorn>=0.22.0
