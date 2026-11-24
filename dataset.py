@@ -1,5 +1,6 @@
 """
 PyTorch Dataset and DataLoader creation for C-MAPSS data.
+Includes trajectory-level delta (rate-of-change) features for degradation onset detection.
 """
 import numpy as np
 import torch
@@ -32,15 +33,31 @@ def compute_window_hc(window_arr):
     return np.array(feats, dtype=np.float32)
 
 
+def compute_trajectory_deltas(sensor_vals):
+    """
+    Compute first-order temporal differences across the full engine trajectory
+    BEFORE window slicing so window boundaries have true physical Δx_t = x_t - x_{t-1}.
+    """
+    return np.diff(sensor_vals, axis=0, prepend=sensor_vals[:1]).astype(np.float32)
+
+
 class CMAPSSDataset(Dataset):
     """
-    Sliding-window dataset.
-    HC features are computed from each window (not the full engine sequence),
-    ensuring train and test are processed identically.
+    Sliding-window dataset with trajectory-accurate delta features.
+    HC features are computed from raw sensors (each window), not deltas.
+    Sequence input includes [raw_sensors | delta_sensors] for Conv1D.
     """
     def __init__(self, df, sensors, window_size, rul_max,
-                 hc_scaler=None, is_train=True, step=1):
+                 hc_scaler=None, is_train=True, step=1,
+                 last_k=1):
+        """
+        Args:
+            last_k: Number of overlapping windows per engine for test-time
+                    ramp smoothing (1 = standard single window, >1 for Last-K).
+                    Only applies when is_train=False.
+        """
         self.windows, self.hc_feats, self.labels = [], [], []
+        self.engine_ids = []  # Track engine ID for Last-K grouping
         raw_hc = []
 
         for eng_id, group in df.groupby('engine_id'):
@@ -48,23 +65,41 @@ class CMAPSSDataset(Dataset):
             sensor_vals = group[sensors].values.astype(np.float32)
             rul_vals    = group['RUL'].values.astype(np.float32)
 
-            if len(group) < window_size:
-                pad = window_size - len(group)
+            # Compute deltas on the full trajectory before padding/slicing
+            delta_vals  = compute_trajectory_deltas(sensor_vals)
+
+            # Ensure enough length for window_size (and Last-K during test)
+            min_len = window_size if is_train else (window_size + last_k - 1)
+            if len(sensor_vals) < min_len:
+                pad = min_len - len(sensor_vals)
                 sensor_vals = np.pad(sensor_vals, ((pad, 0), (0, 0)), mode='edge')
+                delta_vals  = np.pad(delta_vals,  ((pad, 0), (0, 0)), mode='constant', constant_values=0.0)
                 rul_vals    = np.pad(rul_vals,    (pad, 0),           mode='edge')
 
             if is_train:
                 for start in range(0, len(sensor_vals) - window_size + 1, step):
                     end = start + window_size
-                    win = sensor_vals[start:end]
-                    self.windows.append(win)
-                    raw_hc.append(compute_window_hc(win))
+                    win_raw   = sensor_vals[start:end]
+                    win_delta = delta_vals[start:end]
+                    win_aug   = np.concatenate([win_raw, win_delta], axis=1)
+                    self.windows.append(win_aug)
+                    raw_hc.append(compute_window_hc(win_raw))  # HC from raw only
                     self.labels.append(rul_vals[end - 1] / rul_max)
+                    self.engine_ids.append(eng_id)
             else:
-                win = sensor_vals[-window_size:]
-                self.windows.append(win)
-                raw_hc.append(compute_window_hc(win))
-                self.labels.append(rul_vals[-1] / rul_max)
+                # Last-K: extract K overlapping windows from the end
+                K = min(last_k, max(1, len(sensor_vals) - window_size + 1))
+                for k in range(K):
+                    offset = K - 1 - k  # k=0 -> oldest, k=K-1 -> newest
+                    start = len(sensor_vals) - window_size - offset
+                    end = start + window_size
+                    win_raw   = sensor_vals[start:end]
+                    win_delta = delta_vals[start:end]
+                    win_aug   = np.concatenate([win_raw, win_delta], axis=1)
+                    self.windows.append(win_aug)
+                    raw_hc.append(compute_window_hc(win_raw))
+                    self.labels.append(rul_vals[end - 1] / rul_max)
+                    self.engine_ids.append(eng_id)
 
         raw_hc = np.stack(raw_hc)  # (N, n_sensors*6)
 
@@ -88,7 +123,8 @@ class CMAPSSDataset(Dataset):
                 torch.tensor(float(self.labels[idx]), dtype=torch.float32))
 
 
-def create_data_loaders(processed, selected_sensors, batch_size=BATCH_SIZE):
+def create_data_loaders(processed, selected_sensors, batch_size=BATCH_SIZE,
+                        last_k_test=5):
     """
     Create train and test DataLoaders for all four FD datasets.
 
@@ -96,6 +132,7 @@ def create_data_loaders(processed, selected_sensors, batch_size=BATCH_SIZE):
         processed: dict from preprocess_all() containing 'train' and 'test' DataFrames
         selected_sensors: dict of selected sensor names per fd_id
         batch_size: batch size for DataLoaders
+        last_k_test: number of Last-K windows for test-time ramp smoothing
 
     Returns:
         loaders: dict with keys 1-4, each containing 'train' and 'test' DataLoaders
@@ -110,9 +147,11 @@ def create_data_loaders(processed, selected_sensors, batch_size=BATCH_SIZE):
         sensors = selected_sensors[fd_id]
 
         print(f'FD00{fd_id}:')
-        train_ds = CMAPSSDataset(processed[fd_id]['train'], sensors, W, RM, is_train=True)
+        train_ds = CMAPSSDataset(processed[fd_id]['train'], sensors, W, RM,
+                                 is_train=True)
         test_ds  = CMAPSSDataset(processed[fd_id]['test'],  sensors, W, RM,
-                                 hc_scaler=train_ds.hc_scaler, is_train=False)
+                                 hc_scaler=train_ds.hc_scaler, is_train=False,
+                                 last_k=last_k_test)
         hc_n_feat[fd_id] = train_ds.hc_feats.shape[1]
 
         loaders[fd_id] = {
@@ -121,13 +160,17 @@ def create_data_loaders(processed, selected_sensors, batch_size=BATCH_SIZE):
             'test':  DataLoader(test_ds,  batch_size=batch_size,
                                 shuffle=False, num_workers=0, pin_memory=True),
         }
-        print(f'  train:{len(train_ds):,}  test:{len(test_ds)}  hc_dim:{hc_n_feat[fd_id]}')
+        n_input_ch = train_ds.windows[0].shape[1]  # raw + delta
+        print(f'  train:{len(train_ds):,}  test:{len(test_ds)}  '
+              f'hc_dim:{hc_n_feat[fd_id]}  input_ch:{n_input_ch} '
+              f'(raw:{len(sensors)} + delta:{len(sensors)})  '
+              f'last_k:{last_k_test}')
 
-    # Verify test set sizes
+    # Verify test set sizes (with Last-K, expected * K)
     expected = {1: 100, 2: 259, 3: 100, 4: 248}
     for fd_id in range(1, 5):
         got = len(loaders[fd_id]['test'].dataset)
-        status = "OK" if got == expected[fd_id] else "WRONG"
-        print(f'  FD00{fd_id} test count: {got} {status}')
+        status = "OK" if got == expected[fd_id] * last_k_test else "WARN"
+        print(f'  FD00{fd_id} test count: {got} (base:{expected[fd_id]} × K={last_k_test}) {status}')
 
     return loaders, hc_n_feat

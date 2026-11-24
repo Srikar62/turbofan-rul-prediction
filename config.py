@@ -21,8 +21,8 @@ OP_SETTINGS = ['op_1', 'op_2', 'op_3']
 N_CONDITIONS = {1: 1, 2: 6, 3: 1, 4: 6}
 
 # ─── Per-dataset hyperparameters ─────────────────────────────────────────────
-RUL_MAX     = {1: 130, 2: 125, 3: 125, 4: 150}
-WINDOW_SIZE = {1: 30,  2: 60,  3: 30,  4: 60}
+RUL_MAX     = {1: 125, 2: 125, 3: 125, 4: 130}
+WINDOW_SIZE = {1: 30,  2: 75,  3: 30,  4: 90}
 
 VAR_THRESHOLD = 0.01
 BATCH_SIZE    = 256
@@ -30,10 +30,18 @@ MC_T          = 50
 N_EXPERTS     = 4
 
 TRAIN_CFG = {
-    1: {'epochs': 300, 'lr': 5e-4, 'wd': 5e-3, 'dropout': 0.35, 'patience': 25},
-    2: {'epochs': 400, 'lr': 2e-4, 'wd': 5e-3, 'dropout': 0.35, 'patience': 30},
-    3: {'epochs': 300, 'lr': 5e-4, 'wd': 5e-3, 'dropout': 0.4,  'patience': 25},
-    4: {'epochs': 450, 'lr': 2e-4, 'wd': 5e-3, 'dropout': 0.35, 'patience': 35},
+    1: {'epochs': 250, 'lr': 4e-4, 'wd': 5e-3, 'dropout': 0.25, 'patience': 30, 'min_epochs': 35, 'batch_size': 128},
+    2: {'epochs': 350, 'lr': 2e-4, 'wd': 5e-3, 'dropout': 0.30, 'patience': 35, 'min_epochs': 45, 'batch_size': 256},
+    3: {'epochs': 250, 'lr': 4e-4, 'wd': 5e-3, 'dropout': 0.25, 'patience': 30, 'min_epochs': 35, 'batch_size': 128},
+    4: {'epochs': 400, 'lr': 2e-4, 'wd': 5e-3, 'dropout': 0.30, 'patience': 35, 'min_epochs': 45, 'batch_size': 256},
+}
+
+# ─── Loss function & regularization hyperparameters ──────────────────────────
+LOSS_CFG = {
+    'delta': 1.5,              # Huber threshold in cycles
+    'late_penalty': 0.20,      # Gentle asymmetric over-prediction penalty factor
+    'asym_warmup_epochs': 10,  # Warmup epochs for asymmetric loss
+    'label_noise': 0.0,        # 0.0 eliminates continuous regression jitter
 }
 
 # ─── Data path (configurable via env var) ────────────────────────────────────

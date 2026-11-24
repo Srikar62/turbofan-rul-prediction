@@ -1,6 +1,6 @@
 """
 Neural network model definitions for Turbofan RUL prediction.
-CNN+BiLSTM+3DAttn + True MoE(4)
+CNN+BiLSTM+3DAttn + SK-Conv1D + CrossAttention Fusion + MoE(4)
 """
 import numpy as np
 import torch
@@ -37,9 +37,118 @@ class AttentionPool(nn.Module):
         return (w * x).sum(dim=1)                 # (B, d_model)
 
 
+# ─── Selective Kernel Conv1D ────────────────────────────────────────────────
+class SelectiveKernelConv1D(nn.Module):
+    """
+    Adaptive multi-scale 1D convolution with softmax gating.
+    Replaces static concat of conv3/conv5/conv7 with:
+        V = a₃·U₃ + a₅·U₅ + a₇·U₇
+    where a = softmax(FC(GAP(U₃ + U₅ + U₇))).
+
+    The network dynamically selects receptive fields:
+    - Healthy early life: broad smoothing (k=7)
+    - Near failure: sharp sensitivity (k=3)
+    """
+    def __init__(self, in_channels, out_channels, reduction=4):
+        super().__init__()
+        self.conv3 = nn.Conv1d(in_channels, out_channels, kernel_size=3, padding=1)
+        self.conv5 = nn.Conv1d(in_channels, out_channels, kernel_size=5, padding=2)
+        self.conv7 = nn.Conv1d(in_channels, out_channels, kernel_size=7, padding=3)
+
+        # Squeeze-and-select: GAP -> FC -> 3 sets of channel weights
+        mid = max(out_channels // reduction, 16)
+        self.select = nn.Sequential(
+            nn.Linear(out_channels, mid),
+            nn.GELU(),
+            nn.Linear(mid, out_channels * 3),  # 3 branches
+        )
+
+    def forward(self, x):  # x: (B, C_in, T)
+        u3 = self.conv3(x)  # (B, C_out, T)
+        u5 = self.conv5(x)
+        u7 = self.conv7(x)
+
+        # Fuse: element-wise sum -> Global Average Pool
+        u_sum = u3 + u5 + u7                            # (B, C_out, T)
+        gap = u_sum.mean(dim=2)                         # (B, C_out)
+
+        # Softmax gating across 3 branches
+        attn = self.select(gap)                         # (B, C_out * 3)
+        B, C = gap.shape
+        attn = attn.view(B, 3, C)                       # (B, 3, C_out)
+        attn = F.softmax(attn, dim=1)                   # (B, 3, C_out)
+
+        # Weighted combination
+        a3, a5, a7 = attn[:, 0], attn[:, 1], attn[:, 2]  # each (B, C_out)
+        out = (a3.unsqueeze(2) * u3 +
+               a5.unsqueeze(2) * u5 +
+               a7.unsqueeze(2) * u7)                      # (B, C_out, T)
+        return out
+
+
+# ─── Cross-Attention Guided Fusion ──────────────────────────────────────────
+class CrossAttentionFusion(nn.Module):
+    """
+    Fuses:
+      1. Handcrafted statistical priors (x_hc)
+      2. Attention-pooled BiLSTM history (pooled_learned)
+      3. Terminal cycle BiLSTM state (last_token)
+    Uses their combined state as Query to cross-attend over the full BiLSTM sequence,
+    then concatenates with a direct HC projection (output dim = fc_dim * 2).
+    """
+    def __init__(self, bilstm_dim, hc_dim, fc_dim=128, n_heads=4, dropout=0.1):
+        super().__init__()
+        self.fc_dim = fc_dim
+
+        self.proj_kv = nn.Linear(bilstm_dim, fc_dim)
+        # Query combines [pooled_learned (256) + last_token (256) + x_hc (hc_dim)]
+        self.proj_q = nn.Sequential(
+            nn.Linear(bilstm_dim * 2 + hc_dim, fc_dim),
+            nn.GELU(),
+            nn.Linear(fc_dim, fc_dim),
+        )
+
+        self.cross_attn = nn.MultiheadAttention(
+            embed_dim=fc_dim, num_heads=n_heads,
+            dropout=dropout, batch_first=True
+        )
+        self.attn_norm = nn.LayerNorm(fc_dim)
+
+        self.hc_proj = nn.Sequential(
+            nn.Linear(hc_dim, fc_dim),
+            nn.GELU(),
+            nn.Dropout(dropout * 0.5),
+            nn.LayerNorm(fc_dim),
+        )
+
+    def forward(self, bilstm_tokens, pooled_learned, x_hc):
+        """
+        Args:
+            bilstm_tokens: (B, T, bilstm_dim) — full temporal sequence
+            pooled_learned: (B, bilstm_dim) — attention-pooled representation
+            x_hc: (B, hc_dim) — handcrafted features
+        Returns:
+            fused: (B, fc_dim * 2) — fused representation for MoE head
+        """
+        last_token = bilstm_tokens[:, -1, :]  # (B, bilstm_dim) — terminal state at t=T
+
+        kv = self.proj_kv(bilstm_tokens)      # (B, T, fc_dim)
+        q_in = torch.cat([pooled_learned, last_token, x_hc], dim=1)
+        q_base = self.proj_q(q_in)            # (B, fc_dim)
+
+        attended, _ = self.cross_attn(q_base.unsqueeze(1), kv, kv)
+        # Standard residual + LayerNorm keeps activation scale well-calibrated
+        seq_repr = self.attn_norm(q_base + attended.squeeze(1))  # (B, fc_dim)
+
+        hc_direct = self.hc_proj(x_hc)        # (B, fc_dim)
+
+        # Preserve both normalized streams without scale distortion
+        return torch.cat([seq_repr, hc_direct], dim=1)  # (B, fc_dim * 2)
+
+
 class ExpertMLP(nn.Module):
     """
-    Expert MLP. Final bias = 0.5 → initial output ≈ 0.5 for all inputs,
+    Expert MLP. Final bias = 0.5 -> initial output ≈ 0.5 for all inputs,
     keeping every output in the active zone of clamp(0,1) from batch 1.
     """
     def __init__(self, in_dim, hidden=128):
@@ -104,22 +213,21 @@ class MoEOutputHead(nn.Module):
 
 class TurbofanRULModel(nn.Module):
     """
-    Deeper CNN-BiLSTM with:
-    - 3-layer multi-scale Conv (kernels 3, 5, 7) for richer local features
-    - Larger BiLSTM hidden (128)
-    - AttentionPool instead of mean-pool
+    Improved CNN-BiLSTM with:
+    - Selective Kernel Conv1D (adaptive multi-scale receptive field)
+    - 3D Attention on BiLSTM outputs
+    - Cross-Attention Guided Fusion (HC + pooled + terminal state query temporal tokens)
     - MoE output head with entropy regularisation
+
+    Input n_sensors is raw + delta (doubled by dataset.py).
     """
     def __init__(self, n_sensors, n_hc_features,
                  conv_out=64, bilstm_hidden=128,
                  fc_dim=128, dropout=0.35, n_experts=4):
         super().__init__()
 
-        # Multi-scale conv: 3 parallel convolutions at different kernel sizes
-        self.conv3 = nn.Conv1d(n_sensors, conv_out // 3, kernel_size=3, padding=1)
-        self.conv5 = nn.Conv1d(n_sensors, conv_out // 3, kernel_size=5, padding=2)
-        self.conv7 = nn.Conv1d(n_sensors, conv_out - 2 * (conv_out // 3),
-                               kernel_size=7, padding=3)
+        # Selective Kernel Conv1D: adaptive multi-scale convolution
+        self.sk_conv = SelectiveKernelConv1D(n_sensors, conv_out)
         self.conv_act  = nn.GELU()
         self.conv_drop = nn.Dropout(dropout)
         self.conv_ln   = nn.LayerNorm(conv_out)
@@ -134,48 +242,60 @@ class TurbofanRULModel(nn.Module):
 
         self.pool = AttentionPool(bilstm_out)
 
-        self.fc_learned = nn.Sequential(
-            nn.Linear(bilstm_out, fc_dim), nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(fc_dim, fc_dim // 2), nn.GELU(),
-            nn.Dropout(dropout * 0.5)
+        # Cross-Attention Guided Fusion (outputs fc_dim * 2 = 256)
+        self.fusion = CrossAttentionFusion(
+            bilstm_dim=bilstm_out,
+            hc_dim=n_hc_features,
+            fc_dim=fc_dim,
+            n_heads=4,
+            dropout=dropout
         )
-        self.fc_handcrafted = nn.Sequential(
-            nn.Linear(n_hc_features, fc_dim), nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(fc_dim, fc_dim // 2), nn.GELU(),
-            nn.Dropout(dropout * 0.5)
-        )
-        self.moe = MoEOutputHead(fc_dim, n_experts, expert_hidden=128)
+
+        # MoE input receives [seq_repr (128) | hc_direct (128)] = 256
+        self.moe = MoEOutputHead(fc_dim * 2, n_experts, expert_hidden=128)
 
     def forward(self, x_seq, x_hc, training=False):
-        xp = x_seq.permute(0, 2, 1)                         
-        c  = torch.cat([self.conv3(xp),
-                        self.conv5(xp),
-                        self.conv7(xp)], dim=1)              
+        xp = x_seq.permute(0, 2, 1)
+        c  = self.sk_conv(xp)                             # (B, conv_out, T)
         c  = self.conv_drop(self.conv_act(c))
-        c  = self.conv_ln(c.permute(0, 2, 1))               
+        c  = self.conv_ln(c.permute(0, 2, 1))             # (B, T, conv_out)
 
-        lstm_out, _ = self.bilstm(c)                        
-        att_out     = self.attention(lstm_out)               
-        pooled      = self.pool(att_out)                     
+        lstm_out, _ = self.bilstm(c)                      # (B, T, bilstm_out)
+        att_out     = self.attention(lstm_out)            # (B, T, bilstm_out)
+        pooled      = self.pool(att_out)                  # (B, bilstm_out)
 
-        lf    = self.fc_learned(pooled)                 
-        hf    = self.fc_handcrafted(x_hc)                    
-        fused = torch.cat([lf, hf], dim=1)                  
+        # Cross-Attention Fusion: [pooled + last_token + x_hc] queries temporal tokens
+        fused = self.fusion(att_out, pooled, x_hc)        # (B, fc_dim * 2 = 256)
         return self.moe(fused, training=training).clamp(0, 1)
+
+    def get_gate_weights(self, x_seq, x_hc):
+        """Extract MoE gate routing weights for interpretability and balance checks."""
+        xp = x_seq.permute(0, 2, 1)
+        c  = self.sk_conv(xp)
+        c  = self.conv_drop(self.conv_act(c))
+        c  = self.conv_ln(c.permute(0, 2, 1))
+
+        lstm_out, _ = self.bilstm(c)
+        att_out     = self.attention(lstm_out)
+        pooled      = self.pool(att_out)
+
+        fused = self.fusion(att_out, pooled, x_hc)
+        return F.softmax(self.moe.gate(fused), dim=-1)
 
 
 def sanity_check(selected_sensors, hc_n_feat, device):
     """Run a quick sanity check on the model."""
     from config import WINDOW_SIZE
 
+    # n_sensors is doubled (raw + delta)
+    n_input = len(selected_sensors[1]) * 2
+
     _m = TurbofanRULModel(
-        n_sensors=len(selected_sensors[1]),
+        n_sensors=n_input,
         n_hc_features=hc_n_feat[1]
     ).to(device)
 
-    _s = torch.randn(8, WINDOW_SIZE[1], len(selected_sensors[1])).to(device)
+    _s = torch.randn(8, WINDOW_SIZE[1], n_input).to(device)
     _h = torch.randn(8, hc_n_feat[1]).to(device)
     _o = _m(_s, _h)
 

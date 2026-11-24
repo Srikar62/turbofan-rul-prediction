@@ -1,48 +1,81 @@
 """
-MC Dropout evaluation and expert utilisation check.
+MC Dropout evaluation with Last-K ramp smoothing and expert utilisation check.
 """
 import numpy as np
 import torch
-import torch.nn.functional as F
+from collections import defaultdict
 
 from config import MC_T, RUL_MAX, DEVICE
 from metrics import score_function, r2_score
 
 
-def mc_predict(model, x_seq, x_hc, T=50, rul_max=130, device=DEVICE):
+def mc_predict(model, x_seq, x_hc, T=50, rul_max=130, device=DEVICE, quantile=0.40):
     """
     Perform MC Dropout prediction.
-
-    Args:
-        model: Trained model
-        x_seq: Sequence input tensor
-        x_hc: Handcrafted features tensor
-        T: Number of MC samples
-        rul_max: Maximum RUL value for denormalization
-        device: torch device
-
-    Returns:
-        Tuple of (mean predictions, std predictions, 5th percentile, 95th percentile)
+    Blends posterior mean (60%) with conservative 40th percentile (40%) to suppress
+    exponential late-prediction penalties in the NASA Score without harming RMSE.
     """
     model.train()  # Enable dropout for MC sampling
     x_seq = x_seq.to(device)
     x_hc  = x_hc.to(device)
     with torch.no_grad():
         preds = torch.stack(
-            [model(x_seq, x_hc, training=False).squeeze() for _ in range(T)]
-        ) * rul_max
-    return (preds.mean(0).cpu().numpy(),
+            [model(x_seq, x_hc, training=False).squeeze(-1) for _ in range(T)]
+        ) * float(rul_max)
+
+    point_est = 0.60 * preds.mean(0) + 0.40 * torch.quantile(preds, quantile, 0)
+
+    return (point_est.cpu().numpy(),
             preds.std(0).cpu().numpy(),
             torch.quantile(preds, 0.05, 0).cpu().numpy(),
             torch.quantile(preds, 0.95, 0).cpu().numpy())
 
 
+def _aggregate_lastk_predictions(engine_ids, means, stds, ci_los, ci_his, trues, rul_max):
+    """
+    Aggregate Last-K overlapping window predictions per engine using
+    clamped ramp-aligned averaging: ŷ_final = Σ w_k * clip(ŷ_{T-k} - k, 0, rul_max)
+    """
+    engine_groups = defaultdict(list)
+    for i, eid in enumerate(engine_ids):
+        engine_groups[eid].append(i)
+
+    agg_means, agg_trues, agg_stds, agg_ci_los, agg_ci_his = [], [], [], [], []
+
+    for eid in sorted(engine_groups.keys()):
+        indices = engine_groups[eid]
+        K = len(indices)
+
+        if K == 1:
+            idx = indices[0]
+            agg_means.append(float(np.clip(means[idx], 0.0, rul_max)))
+            agg_trues.append(float(trues[idx]))
+            agg_stds.append(float(stds[idx]))
+            agg_ci_los.append(float(np.clip(ci_los[idx], 0.0, rul_max)))
+            agg_ci_his.append(float(np.clip(ci_his[idx], 0.0, rul_max)))
+        else:
+            aligned_preds = []
+            # Weight more recent windows slightly higher (linear ramp weights)
+            weights = np.linspace(0.7, 1.3, K)
+            weights /= weights.sum()
+
+            for local_k, idx in enumerate(indices):
+                offset = K - 1 - local_k  # oldest window has largest offset
+                aligned_preds.append(np.clip(means[idx] - offset, 0.0, rul_max))
+
+            agg_means.append(float(np.sum(np.array(aligned_preds) * weights)))
+            agg_trues.append(float(trues[indices[-1]]))  # ground truth at final time step
+            agg_stds.append(float(np.mean([stds[i] for i in indices])))
+            agg_ci_los.append(float(np.clip(np.mean([ci_los[i] for i in indices]), 0.0, rul_max)))
+            agg_ci_his.append(float(np.clip(np.mean([ci_his[i] for i in indices]), 0.0, rul_max)))
+
+    return (np.array(agg_means), np.array(agg_trues),
+            np.array(agg_stds), np.array(agg_ci_los), np.array(agg_ci_his))
+
+
 def mc_dropout_evaluate(trained_models, loaders, device=DEVICE, mc_t=MC_T):
     """
-    Run MC Dropout evaluation on all datasets.
-
-    Returns:
-        mc_results: dict with keys 1-4, each containing evaluation metrics
+    Run MC Dropout evaluation on all datasets with Last-K ramp smoothing.
     """
     print('MC Dropout Evaluation (T=%d)' % mc_t)
     print('=' * 55)
@@ -50,7 +83,7 @@ def mc_dropout_evaluate(trained_models, loaders, device=DEVICE, mc_t=MC_T):
     mc_results = {}
     for fd_id in range(1, 5):
         model = trained_models[fd_id]
-        rul_max = RUL_MAX[fd_id]
+        rul_max = float(RUL_MAX[fd_id])
         am, at, astd, alo, ahi = [], [], [], [], []
 
         for x_seq, x_hc, y in loaders[fd_id]['test']:
@@ -65,6 +98,17 @@ def mc_dropout_evaluate(trained_models, loaders, device=DEVICE, mc_t=MC_T):
         am   = np.array(am)
         at   = np.array(at)
         astd = np.array(astd)
+        alo  = np.array(alo)
+        ahi  = np.array(ahi)
+
+        test_ds = loaders[fd_id]['test'].dataset
+        engine_ids = test_ds.engine_ids
+
+        if len(engine_ids) > 0 and len(engine_ids) != len(set(engine_ids)):
+            am, at, astd, alo, ahi = _aggregate_lastk_predictions(
+                engine_ids, am, astd, alo, ahi, at, rul_max
+            )
+
         mae   = np.abs(am - at).mean()
         rmse  = np.sqrt(((am - at) ** 2).mean())
         ss_res = ((at - am) ** 2).sum()
@@ -74,7 +118,7 @@ def mc_dropout_evaluate(trained_models, loaders, device=DEVICE, mc_t=MC_T):
 
         mc_results[fd_id] = {
             'mean': am, 'true': at, 'std': astd,
-            'ci_lo': np.array(alo), 'ci_hi': np.array(ahi),
+            'ci_lo': alo, 'ci_hi': ahi,
             'mae': mae, 'rmse': rmse, 'score': score, 'r2': r2
         }
         print(f'  FD00{fd_id}: MAE={mae:.4f} | RMSE={rmse:.4f} | R\u00b2={r2:.4f} | Score={score:.1f} | '
@@ -92,21 +136,7 @@ def check_expert_utilisation(trained_models, loaders, device=DEVICE):
         all_gates = []
         with torch.no_grad():
             for x_seq, x_hc, _ in loaders[fd_id]['test']:
-                xp = x_seq.to(device).permute(0, 2, 1)
-                c  = torch.cat([model.conv3(xp),
-                                model.conv5(xp),
-                                model.conv7(xp)], dim=1)
-                c  = model.conv_drop(model.conv_act(c))
-                c  = model.conv_ln(c.permute(0, 2, 1))
-
-                lstm_out, _ = model.bilstm(c)
-                att_out     = model.attention(lstm_out)
-                pooled      = model.pool(att_out)
-
-                lf = model.fc_learned(pooled)
-                hf = model.fc_handcrafted(x_hc.to(device))
-                fused = torch.cat([lf, hf], 1)
-                gw = F.softmax(model.moe.gate(fused), dim=-1)
+                gw = model.get_gate_weights(x_seq.to(device), x_hc.to(device))
                 all_gates.append(gw.cpu())
 
         gm = torch.cat(all_gates, 0).mean(0).numpy()
